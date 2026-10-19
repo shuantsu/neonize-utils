@@ -1,0 +1,13 @@
+# Sessão autenticada do WhatsApp — NUNCA versionar (equivale à conta)
+whatsapp_session.db
+
+# Dados privados
+wa_messages.db
+wa_names.json
+
+# Ambiente e cache
+.venv/
+__pycache__/
+*.pyc
+.env
+.env.*
