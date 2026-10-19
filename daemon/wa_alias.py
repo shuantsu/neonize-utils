@@ -5,9 +5,9 @@ Uso (agente):
     1. ANTES de enviar, verifique se o alvo já existe:  wa_alias.py get <nome>
     2. Se ainda não existir, persista:                  wa_alias.py set <nome> <jid>
     3. Envie usando o NOME, nunca o JID:
-           wa_enqueue.py "pai" --text "oi"        (o script expande sozinho)
+           wa_enqueue.py "contato" --text "oi"     (o script expande sozinho)
 
-Arquivo: /root/whatsapp/aliases.json  ({ "pai": "55...@s.whatsapp.net", ... })
+Arquivo: /root/whatsapp/aliases.json  ({ "contato": "5511999999999@s.whatsapp.net", ... })
 NUNCA versione este arquivo (está no .gitignore).
 """
 import json
