@@ -11,6 +11,7 @@ import sys
 import time
 
 sys.path.insert(0, "/root/whatsapp/daemon")
+from wa_alias import resolve_alias  # noqa: E402
 from wa_store import DB_PATH, OUTBOX_SCHEMA  # noqa: E402
 
 
@@ -19,7 +20,7 @@ def main():
     if len(args) < 2:
         print(__doc__)
         sys.exit(1)
-    target = args[0]
+    target = resolve_alias(args[0])
     kind, text, path, caption, ptt = "text", "", "", "", 0
     i = 1
     while i < len(args):

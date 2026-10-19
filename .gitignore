@@ -5,6 +5,10 @@ whatsapp_session.db
 wa_messages.db
 wa_names.json
 
+# Aliases de destinatários (telefone/JID — nunca versionar)
+aliases.json
+aliases.json.tmp
+
 # Ambiente e cache
 .venv/
 __pycache__/

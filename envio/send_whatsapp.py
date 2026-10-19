@@ -5,8 +5,11 @@ from neonize.client import NewClient
 from neonize.utils.jid import build_jid
 from neonize.events import ConnectedEv
 
+sys.path.insert(0, "/root/whatsapp/daemon")
+from wa_alias import resolve_alias  # noqa: E402
+
 def get_recipient(target: str):
-    target = target.strip()
+    target = resolve_alias(target).strip()
     if "@" in target:
         user, server = target.split("@", 1)
         return build_jid(user, server=server)
@@ -49,8 +52,9 @@ def send_message(target: str, text: str):
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:
-        print("Uso: python3 send_whatsapp.py <numero_ou_jid> <mensagem>")
-        print("Exemplo: python3 send_whatsapp.py 120363183894564586@g.us 'Olá grupo'")
+        print("Uso: python3 send_whatsapp.py <numero_ou_jid_ou_alias> <mensagem>")
+        print("Exemplo: python3 send_whatsapp.py <id_do_grupo>@g.us 'Olá grupo'")
+        print("Alias: nomes definidos em /root/whatsapp/aliases.json são expandidos automaticamente.")
         sys.exit(1)
     
     target = sys.argv[1]

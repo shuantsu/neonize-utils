@@ -37,9 +37,19 @@ from neonize.utils import extract_text
 DEFAULT_OUT = "/tmp/opencode/recent_messages.jsonl"
 
 
+DB_PATH = "/root/whatsapp/wa_messages.db"
+NAMES_PATH = "/root/whatsapp/wa_names.json"
+
+
 def parse_args():
     p = argparse.ArgumentParser(description="Lista últimas N mensagens do WhatsApp")
-    p.add_argument("n", nargs="?", type=int, default=20, help="quantidade (default: 20)")
+    p.add_argument(
+        "n",
+        nargs="?",
+        default="20",
+        help="quantidade (default: 20). Se não for número, é tratado como filtro --chat",
+    )
+    p.add_argument("--offline", action="store_true", help="não conecta: só lê wa_messages.db (rápido)")
     p.add_argument("--timeout", type=int, default=35, help="segundos coletando (default: 35)")
     p.add_argument("--include-status", action="store_true", help="incluir status@broadcast")
     p.add_argument("--include-newsletters", action="store_true", help="incluir @newsletter")
@@ -49,7 +59,16 @@ def parse_args():
     p.add_argument("--output", default=DEFAULT_OUT, help=f"arquivo JSONL (default: {DEFAULT_OUT})")
     p.add_argument("--format", choices=["text", "json"], default="text", help="saída no stdout")
     p.add_argument("--quiet-period", type=int, default=8, help="sair antes se N msgs e silêncio de X seg (0=desliga)")
-    return p.parse_args()
+    args = p.parse_args()
+    raw = str(args.n).strip()
+    try:
+        args.n = max(1, int(raw))
+    except ValueError:
+        if args.chat:
+            p.error(f"posicional {raw!r} inválido (já existe --chat {args.chat!r})")
+        args.chat = raw
+        args.n = 20
+    return args
 
 
 def fmt_jid(j):
@@ -96,6 +115,51 @@ def is_noise_text(t):
     )
 
 
+def load_names():
+    """Retorna (contatos, grupos) como {jid: nome}."""
+    try:
+        with open(NAMES_PATH) as f:
+            d = json.load(f)
+        return d.get("contacts", {}) or {}, d.get("groups", {}) or {}
+    except Exception:
+        return {}, {}
+
+
+def load_local_db():
+    """Lê o histórico local mantido pelo wa_daemon (read-only, offline)."""
+    rows = []
+    if not os.path.exists(DB_PATH):
+        return rows
+    import sqlite3
+
+    try:
+        conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
+        cur = conn.execute(
+            "SELECT id, chat, sender, pushname, is_from_me, is_group, "
+            "timestamp_ms, datetime, text FROM messages"
+        )
+        for r in cur:
+            rows.append(
+                {
+                    "id": r["id"] or "",
+                    "timestamp_ms": int(r["timestamp_ms"] or 0),
+                    "datetime": r["datetime"] or "?",
+                    "chat": r["chat"] or "",
+                    "sender": r["sender"] or "",
+                    "pushname": r["pushname"] or "",
+                    "is_from_me": bool(r["is_from_me"]),
+                    "is_group": bool(r["is_group"]),
+                    "text": r["text"] or "",
+                    "source": "local_db",
+                }
+            )
+        conn.close()
+    except Exception as e:
+        print(f"aviso: não li {DB_PATH}: {e}", flush=True)
+    return rows
+
+
 def msg_to_dict(msg):
     info = msg.Info
     src = info.MessageSource
@@ -125,6 +189,69 @@ def msg_to_dict(msg):
     }
 
 
+def finalize(args, collected, n, elapsed=0.0):
+    """Dedup + filtros + ordenação + impressão."""
+    by_id = {}
+    for d in collected:
+        _id = d.get("id") or f"{d.get('chat')}-{d.get('timestamp_ms')}-{str(d.get('text', ''))[:20]}"
+        if _id not in by_id:
+            by_id[_id] = d
+        else:
+            old_noise = is_noise_text(by_id[_id].get("text", ""))
+            new_noise = is_noise_text(d.get("text", ""))
+            if old_noise and not new_noise:
+                by_id[_id] = d
+    rows = list(by_id.values())
+
+    if not args.include_me:
+        rows = [r for r in rows if not r.get("is_from_me")]
+    if not args.include_status:
+        rows = [r for r in rows if r.get("chat") != "status@broadcast"]
+    if not args.include_newsletters:
+        rows = [r for r in rows if "@newsletter" not in str(r.get("chat"))]
+    if not args.include_noise:
+        rows = [r for r in rows if not is_noise_text(r.get("text", ""))]
+    if args.chat:
+        contacts, groups = load_names()
+        q = args.chat.lower()
+        named = {
+            jid
+            for jid, nm in list(groups.items()) + list(contacts.items())
+            if nm and q in str(nm).lower()
+        }
+
+        def match(r):
+            chat = str(r.get("chat", ""))
+            if q in chat.lower() or q in str(r.get("pushname", "")).lower():
+                return True
+            return any(j in chat for j in named)
+
+        rows = [r for r in rows if match(r)]
+
+    rows.sort(key=lambda r: r.get("timestamp_ms", 0), reverse=True)
+    top = rows[:n]
+
+    srcs = {}
+    for r in by_id.values():
+        s = r.get("source", "?")
+        srcs[s] = srcs.get(s, 0) + 1
+    print(
+        f"\n===== ÚLTIMAS {len(top)} "
+        f"(de {len(by_id)} únicas, {len(collected)} brutas | fontes: {srcs} | {elapsed:.0f}s) =====",
+        flush=True,
+    )
+    if args.format == "json":
+        print(json.dumps(top, ensure_ascii=False, indent=2), flush=True)
+    else:
+        for i, r in enumerate(top, 1):
+            grp = " [grupo]" if r.get("is_group") else ""
+            mine = " [eu]" if r.get("is_from_me") else ""
+            print(
+                f"{i}. [{r.get('datetime')}] {r.get('pushname')}{grp}{mine} ({r.get('chat')}): {r.get('text')}",
+                flush=True,
+            )
+
+
 def main():
     args = parse_args()
     n = max(1, args.n)
@@ -140,14 +267,30 @@ def main():
     except Exception as e:
         print(f"aviso: não limpei {args.output}: {e}", flush=True)
 
-    def save(d):
+    def save(d, live=True):
         collected.append(d)
         try:
             with open(args.output, "a") as f:
                 f.write(json.dumps(d, ensure_ascii=False) + "\n")
         except Exception:
             pass
-        last_msg_time[0] = _time.time()
+        if live:
+            last_msg_time[0] = _time.time()
+
+    # fonte primária: histórico local (inclui msgs enviadas por mim)
+    db_rows = load_local_db()
+    last_msg_time[0] = start
+    for r in db_rows:
+        save(r, live=False)
+    print(
+        f"HISTÓRICO LOCAL: {len(db_rows)} msgs de {DB_PATH}"
+        + (" (modo --offline, sem conexão)" if args.offline else ""),
+        flush=True,
+    )
+
+    if args.offline:
+        finalize(args, collected, n, elapsed=_time.time() - start)
+        os._exit(0)
 
     client = NewClient("/root/whatsapp/whatsapp_session.db")
 
@@ -240,40 +383,7 @@ def main():
                 break
 
     # ---- pós-processamento: dedup, filtros, ordenação ----
-    by_id = {}
-    for d in collected:
-        _id = d.get("id") or f"{d.get('chat')}-{d.get('timestamp_ms')}-{d.get('text')[:20]}"
-        if _id not in by_id:
-            by_id[_id] = d
-        else:
-            old_noise = is_noise_text(by_id[_id].get("text", ""))
-            new_noise = is_noise_text(d.get("text", ""))
-            if old_noise and not new_noise:
-                by_id[_id] = d
-    rows = list(by_id.values())
-
-    if not args.include_me:
-        rows = [r for r in rows if not r.get("is_from_me")]
-    if not args.include_status:
-        rows = [r for r in rows if r.get("chat") != "status@broadcast"]
-    if not args.include_newsletters:
-        rows = [r for r in rows if "@newsletter" not in str(r.get("chat"))]
-    if not args.include_noise:
-        rows = [r for r in rows if not is_noise_text(r.get("text", ""))]
-    if args.chat:
-        q = args.chat.lower()
-        rows = [r for r in rows if q in str(r.get("chat", "")).lower() or q in str(r.get("pushname", "")).lower()]
-
-    rows.sort(key=lambda r: r.get("timestamp_ms", 0), reverse=True)
-    top = rows[:n]
-
-    print(f"\n===== ÚLTIMAS {len(top)} (de {len(by_id)} únicas, {len(collected)} brutas) =====", flush=True)
-    if args.format == "json":
-        print(json.dumps(top, ensure_ascii=False, indent=2), flush=True)
-    else:
-        for i, r in enumerate(top, 1):
-            grp = " [grupo]" if r.get("is_group") else ""
-            print(f"{i}. [{r.get('datetime')}] {r.get('pushname')}{grp} ({r.get('chat')}): {r.get('text')}", flush=True)
+    finalize(args, collected, n, elapsed=elapsed)
 
     os._exit(0)
 

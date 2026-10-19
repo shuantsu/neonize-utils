@@ -8,6 +8,9 @@ from neonize.client import NewClient
 from neonize.utils.jid import build_jid
 from neonize.events import ConnectedEv
 
+sys.path.insert(0, "/root/whatsapp/daemon")
+from wa_alias import resolve_alias  # noqa: E402
+
 SESSION = "/root/whatsapp/whatsapp_session.db"
 VIDEO_EXT = {".mp4", ".mov", ".3gp", ".mkv", ".webm"}
 AUDIO_EXT = {".mp3", ".ogg", ".opus", ".m4a", ".wav", ".aac", ".flac"}
@@ -15,7 +18,7 @@ IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 
 
 def get_recipient(target: str):
-    target = target.strip()
+    target = resolve_alias(target).strip()
     if "@" in target:
         user, server = target.split("@", 1)
         return build_jid(user, server=server)

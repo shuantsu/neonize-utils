@@ -52,10 +52,13 @@ Escaneie o PNG no WhatsApp do telefone para concluir o vínculo. Depois que a se
 
 ```bash
 python3 envio/send_wa.py 5511999999999 "mensagem"
-python3 envio/send_whatsapp.py 120363183894564586@g.us "mensagem no grupo"
+python3 envio/send_whatsapp.py <id_do_grupo>@g.us "mensagem no grupo"
 python3 envio/send_media.py <destino> <arquivo> [legenda] [--ptt]
 python3 envio/send_video.py <destino> <arquivo> [legenda]
 ```
+
+Destinatários podem ser passados por **alias** (nome definido em `aliases.json`,
+gitignorado) — os scripts expandem para o JID sozinhos:
 
 ## Listagem
 
